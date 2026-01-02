@@ -95,54 +95,77 @@ def sun():
         t0 = ts.from_datetime(start_of_day)
         t1 = ts.from_datetime(end_of_day)
 
-        # Helper function to find twilight times
-        def find_twilight_times(angle_degrees):
-            """Find times when sun crosses the given altitude angle."""
-            f = almanac.risings_and_settings(eph, eph['sun'], location, horizon_degrees=angle_degrees)
+        # Use dark_twilight_day to find all twilight transitions in one call
+        f = almanac.dark_twilight_day(eph, location)
+        times, events = almanac.find_discrete(t0, t1, f)
 
-            times, values = almanac.find_discrete(t0, t1, f)
+        print(times)
+        print(events)
 
-            result = [None, None]
+        # Map event codes to twilight phases
+        # 0 = Dark (night, sun below -18°)
+        # 1 = Astronomical twilight (sun between -18° and -12°)
+        # 2 = Nautical twilight (sun between -12° and -6°)
+        # 3 = Civil twilight (sun between -6° and -0.833°)
+        # 4 = Day (sun above -0.833°)
 
-            for ti, is_rising in zip(times, values):
-                index = 0 if is_rising else 1
-                result[index] = ti.astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S')
+        # Initialize all times as None
+        astro_up = None
+        nautical_up = None
+        civil_up = None
+        full_up = None
+        full_down = None
+        civil_down = None
+        nautical_down = None
+        astro_down = None
 
-            return result
+        # Process events to extract twilight times
+        for ti, event in zip(times, events):
+            time_str = ti.astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S%z')
 
-        # Calculate all twilight times
-        # Apparent sunrise/sunset: sun's upper limb at horizon (approximately -0.833 degrees)
-        full = find_twilight_times(-0.833)
+            if event == 1:  # Entering astronomical twilight from dark
+                astro_up = time_str
+            elif event == 2:  # Entering nautical twilight
+                nautical_up = time_str
+            elif event == 3:  # Entering civil twilight
+                civil_up = time_str
+            elif event == 4:  # Entering day (sunrise)
+                full_up = time_str
+            # Reverse transitions (going back down)
+            # When transitioning from higher to lower number, it's a "down" event
 
-        # Civil twilight: center of sun at -6 degrees
-        civil = find_twilight_times(-6.0)
-
-        # Nautical twilight: center of sun at -12 degrees
-        nautical = find_twilight_times(-12.0)
-
-        # Astronomical twilight: center of sun at -18 degrees
-        astronomical = find_twilight_times(-18.0)
+        # For sunset events, we need to check transitions in reverse
+        # Process again looking for descending transitions
+        for i in range(len(events) - 1):
+            if events[i] == 4 and events[i + 1] == 3:  # Day to civil twilight (sunset)
+                full_down = times[i + 1].astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S%z')
+            elif events[i] == 3 and events[i + 1] == 2:  # Civil to nautical
+                civil_down = times[i + 1].astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S%z')
+            elif events[i] == 2 and events[i + 1] == 1:  # Nautical to astronomical
+                nautical_down = times[i + 1].astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S%z')
+            elif events[i] == 1 and events[i + 1] == 0:  # Astronomical to dark
+                astro_down = times[i + 1].astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S%z')
 
         # Build response
         sunrise = {}
-        if astronomical[0]:
-            sunrise['astro'] = astronomical[0]
-        if nautical[0]:
-            sunrise['nautical'] = nautical[0]
-        if civil[0]:
-            sunrise['civil'] = civil[0]
-        if full[0]:
-            sunrise['full'] = full[0]
+        if astro_up:
+            sunrise['astro'] = astro_up
+        if nautical_up:
+            sunrise['nautical'] = nautical_up
+        if civil_up:
+            sunrise['civil'] = civil_up
+        if full_up:
+            sunrise['full'] = full_up
 
         sunset = {}
-        if full[1]:
-            sunset['full'] = full[1]
-        if civil[1]:
-            sunset['civil'] = civil[1]
-        if nautical[1]:
-            sunset['nautical'] = nautical[1]
-        if astronomical[1]:
-            sunset['astro'] = astronomical[1]
+        if full_down:
+            sunset['full'] = full_down
+        if civil_down:
+            sunset['civil'] = civil_down
+        if nautical_down:
+            sunset['nautical'] = nautical_down
+        if astro_down:
+            sunset['astro'] = astro_down
 
         result = {
             'timezone': str(tz),
